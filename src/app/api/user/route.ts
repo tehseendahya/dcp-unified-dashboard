@@ -1,18 +1,12 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase-server";
+import { getAuthUser } from "@/lib/get-user";
 import { getOrCreateUser, getAssociateStats, getAssociateDeals } from "@/lib/store";
 
 export async function GET() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const accountType = user.user_metadata?.account_type || "associate";
-  const fullName = user.user_metadata?.full_name || user.email || "Unknown";
-
-  const profile = getOrCreateUser(user.id, user.email || "", fullName, accountType);
+  const profile = getOrCreateUser(user.id, user.email, user.full_name, user.account_type);
   const stats = getAssociateStats(user.id);
   const deals = getAssociateDeals(user.id);
 

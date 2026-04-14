@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase-browser";
 import Link from "next/link";
+
+const isDemo =
+  !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL === "your-supabase-url";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -12,16 +15,53 @@ export default function SignupPage() {
     "associate"
   );
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
-  const supabase = createClient();
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
 
-    const { error } = await supabase.auth.signUp({
+    if (isDemo) {
+      // Demo mode: store user in localStorage
+      const users = JSON.parse(localStorage.getItem("demo_users") || "[]");
+      if (users.some((u: { email: string }) => u.email === email)) {
+        setError("An account with this email already exists.");
+        setLoading(false);
+        return;
+      }
+      const newUser = {
+        id: `demo-${Date.now()}`,
+        email,
+        password,
+        full_name: fullName,
+        account_type: accountType,
+      };
+      users.push(newUser);
+      localStorage.setItem("demo_users", JSON.stringify(users));
+
+      // Auto-login in demo mode
+      const demoUser = {
+        id: newUser.id,
+        email: newUser.email,
+        full_name: newUser.full_name,
+        account_type: newUser.account_type,
+      };
+      document.cookie = `demo_user=${encodeURIComponent(JSON.stringify(demoUser))};path=/;max-age=86400`;
+      localStorage.setItem("demo_current_user", JSON.stringify(demoUser));
+
+      window.location.href =
+        accountType === "operator"
+          ? "/dashboard/operator"
+          : "/dashboard/associate";
+      return;
+    }
+
+    // Supabase mode
+    const { createClient } = await import("@/lib/supabase-browser");
+    const supabase = createClient();
+
+    const { error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -32,36 +72,14 @@ export default function SignupPage() {
       },
     });
 
-    if (error) {
-      setError(error.message);
+    if (authError) {
+      setError(authError.message);
       setLoading(false);
       return;
     }
 
-    setSuccess(true);
-    setLoading(false);
-  }
-
-  if (success) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <div className="w-full max-w-sm p-8 text-center">
-          <h1 className="text-2xl font-semibold text-gray-900 mb-4">
-            Check your email
-          </h1>
-          <p className="text-sm text-gray-600">
-            We sent a confirmation link to {email}. Click it to activate your
-            account.
-          </p>
-          <Link
-            href="/login"
-            className="mt-6 inline-block text-sm text-gray-900 underline"
-          >
-            Back to login
-          </Link>
-        </div>
-      </div>
-    );
+    // In Supabase mode, show confirmation message
+    window.location.href = "/login";
   }
 
   return (
@@ -70,6 +88,11 @@ export default function SignupPage() {
         <h1 className="text-2xl font-semibold text-gray-900 mb-8 text-center">
           Create Account
         </h1>
+        {isDemo && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded px-3 py-2 text-center">
+            Demo mode — Supabase not connected
+          </div>
+        )}
         <form onSubmit={handleSignup} className="space-y-4">
           {error && (
             <p className="text-red-600 text-sm text-center">{error}</p>

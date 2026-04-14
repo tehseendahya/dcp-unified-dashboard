@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase-browser";
 import { Deal } from "@/lib/types";
+
+const isDemo =
+  !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL === "your-supabase-url";
 
 export default function AssociateDashboard() {
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -23,19 +26,29 @@ export default function AssociateDashboard() {
   const [dealCompany, setDealCompany] = useState("");
   const [dealDescription, setDealDescription] = useState("");
 
-  const supabase = createClient();
-
   useEffect(() => {
     async function load() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        setUserName(user.user_metadata?.full_name || user.email || "");
-        setUserId(user.id);
-        // Initialize user in store
-        await fetch("/api/user");
+      if (isDemo) {
+        const stored = localStorage.getItem("demo_current_user");
+        if (stored) {
+          const user = JSON.parse(stored);
+          setUserName(user.full_name);
+          setUserId(user.id);
+        }
+      } else {
+        const { createClient } = await import("@/lib/supabase-browser");
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          setUserName(user.user_metadata?.full_name || user.email || "");
+          setUserId(user.id);
+        }
       }
+
+      // Initialize user in store
+      await fetch("/api/user");
 
       const res = await fetch("/api/deals");
       const data = await res.json();
@@ -95,7 +108,14 @@ export default function AssociateDashboard() {
   }
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
+    if (isDemo) {
+      document.cookie = "demo_user=;path=/;max-age=0";
+      localStorage.removeItem("demo_current_user");
+    } else {
+      const { createClient } = await import("@/lib/supabase-browser");
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    }
     window.location.href = "/login";
   }
 
@@ -109,6 +129,13 @@ export default function AssociateDashboard() {
 
   return (
     <div className="min-h-screen bg-white">
+      {/* Demo banner */}
+      {isDemo && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 text-center text-xs text-amber-800">
+          Demo mode — Supabase not connected. Data resets on server restart.
+        </div>
+      )}
+
       {/* Header */}
       <header className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-gray-900">

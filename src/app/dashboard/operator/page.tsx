@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase-browser";
 import { Deal, SourcedCompany, AssociateStats } from "@/lib/types";
+
+const isDemo =
+  !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL === "your-supabase-url";
 
 interface AssociateWithStats {
   id: string;
@@ -31,17 +34,26 @@ export default function OperatorDashboard() {
   const [dealCompany, setDealCompany] = useState("");
   const [dealDescription, setDealDescription] = useState("");
 
-  const supabase = createClient();
-
   useEffect(() => {
     async function load() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        setUserName(user.user_metadata?.full_name || user.email || "");
-        await fetch("/api/user");
+      if (isDemo) {
+        const stored = localStorage.getItem("demo_current_user");
+        if (stored) {
+          const user = JSON.parse(stored);
+          setUserName(user.full_name);
+        }
+      } else {
+        const { createClient } = await import("@/lib/supabase-browser");
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          setUserName(user.user_metadata?.full_name || user.email || "");
+        }
       }
+
+      await fetch("/api/user");
 
       const [dealsRes, associatesRes, sourcedRes] = await Promise.all([
         fetch("/api/deals"),
@@ -77,7 +89,14 @@ export default function OperatorDashboard() {
   }
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
+    if (isDemo) {
+      document.cookie = "demo_user=;path=/;max-age=0";
+      localStorage.removeItem("demo_current_user");
+    } else {
+      const { createClient } = await import("@/lib/supabase-browser");
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    }
     window.location.href = "/login";
   }
 
@@ -97,6 +116,13 @@ export default function OperatorDashboard() {
 
   return (
     <div className="min-h-screen bg-white">
+      {/* Demo banner */}
+      {isDemo && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 text-center text-xs text-amber-800">
+          Demo mode — Supabase not connected. Data resets on server restart.
+        </div>
+      )}
+
       {/* Header */}
       <header className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-gray-900">
