@@ -24,7 +24,25 @@ export async function POST(request: Request) {
   const company = addSourcedCompany({
     company_name: body.company_name,
     website: body.website || "",
-    description: body.description,
+    description: body.description || "",
+    diligence_stage: body.diligence_stage || "",
+    received_inquiry: body.received_inquiry || "",
+    funding_round: body.funding_round || "",
+    industry: body.industry || "",
+    date_most_recent_screening: body.date_most_recent_screening || "",
+    accelerator: body.accelerator || "",
+    region: body.region || "",
+    pitch_deck: body.pitch_deck || "",
+    rating:
+      typeof body.rating === "number" && Number.isInteger(body.rating)
+        ? body.rating
+        : null,
+    notes: body.notes || "",
+    fundraise: body.fundraise || "",
+    one_pager_url: body.one_pager_url || "",
+    founder_name: body.founder_name || "",
+    location_city: body.location_city || "",
+    duke_connection: body.duke_connection || "",
     submitted_by: user.id,
     submitted_by_name: user.full_name,
   });
