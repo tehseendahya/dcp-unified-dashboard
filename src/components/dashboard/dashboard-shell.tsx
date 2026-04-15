@@ -4,10 +4,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   ChevronDown,
   FileText,
+  Flag,
   Home,
   Loader2,
   LogOut,
   MessageSquarePlus,
+  Table,
   Users,
 } from "lucide-react";
 import React from "react";
@@ -39,14 +41,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { CommunityMember, Deal, DealTask } from "@/lib/types";
+import { CommunityMember, Deal, DealTask, GoalItem, TrackingItem } from "@/lib/types";
 
 type DashboardTab =
   | "home"
   | "my-deals"
   | "source"
   | "community"
-  | "associate-tracker";
+  | "associate-tracker"
+  | "goals"
+  | "tracking";
 type AccountType = "associate" | "operator";
 
 const sourceSchema = z.object({
@@ -129,6 +133,8 @@ export function DashboardShell({ accountType }: { accountType: AccountType }) {
   const [tab, setTab] = React.useState<DashboardTab>("home");
   const [deals, setDeals] = React.useState<Deal[]>([]);
   const [community, setCommunity] = React.useState<CommunityMember[]>([]);
+  const [goals, setGoals] = React.useState<GoalItem[]>([]);
+  const [tracking, setTracking] = React.useState<TrackingItem[]>([]);
   const [userId, setUserId] = React.useState("");
   const [userName, setUserName] = React.useState("");
   const [activeDeal, setActiveDeal] = React.useState<Deal | null>(null);
@@ -175,17 +181,55 @@ export function DashboardShell({ accountType }: { accountType: AccountType }) {
     const userRes = await fetch("/api/user");
     const userPayload = await userRes.json();
 
-    const [dealsRes, communityRes] = await Promise.all([
+    const [dealsRes, communityRes, goalsRes, trackingRes] = await Promise.all([
       fetch("/api/deals"),
       fetch("/api/community"),
+      fetch("/api/goals"),
+      fetch("/api/tracking"),
     ]);
 
     setUserId(userPayload.profile.id);
     setUserName(userPayload.profile.full_name);
     setDeals(await dealsRes.json());
     setCommunity(await communityRes.json());
+    setGoals(await goalsRes.json());
+    setTracking(await trackingRes.json());
     setLoading(false);
   }, []);
+
+  async function updateGoalItem(goal: GoalItem) {
+    const res = await fetch("/api/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        goalId: goal.id,
+        status: goal.status,
+        focus_early_2026: goal.focus_early_2026,
+        actions: goal.actions,
+      }),
+    });
+    const updated = await res.json();
+    setGoals((current) =>
+      current.map((entry) => (entry.id === updated.id ? updated : entry))
+    );
+  }
+
+  async function updateTrackingRow(item: TrackingItem) {
+    const res = await fetch("/api/tracking", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trackingId: item.id,
+        deal_stage: item.deal_stage,
+        tasks_next_steps: item.tasks_next_steps,
+        volunteers_assigned_associates: item.volunteers_assigned_associates,
+      }),
+    });
+    const updated = await res.json();
+    setTracking((current) =>
+      current.map((entry) => (entry.id === updated.id ? updated : entry))
+    );
+  }
 
   React.useEffect(() => {
     loadData();
@@ -532,6 +576,14 @@ export function DashboardShell({ accountType }: { accountType: AccountType }) {
               <DropdownMenuItem onClick={() => setTab("community")}>
                 <Users className="h-4 w-4" />
                 Community
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTab("goals")}>
+                <Flag className="h-4 w-4" />
+                Goals
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTab("tracking")}>
+                <Table className="h-4 w-4" />
+                Tracking
               </DropdownMenuItem>
               {accountType === "operator" && (
                 <DropdownMenuItem onClick={() => setTab("associate-tracker")}>
@@ -897,6 +949,199 @@ export function DashboardShell({ accountType }: { accountType: AccountType }) {
           </section>
         )}
 
+        {tab === "goals" && (
+          <section className="space-y-6">
+            <SectionHeader
+              title="Goals"
+              description="FY26 goals visible to associates and editable by operators."
+            />
+            <div className="space-y-4">
+              {goals
+                .filter((goal) => goal.annual_goal || goal.status || goal.actions)
+                .map((goal) => (
+                  <Card key={goal.id} className="rounded-xl">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">
+                        {goal.annual_goal || "Unlabeled goal"}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium uppercase text-muted-foreground">Status</p>
+                        {accountType === "operator" ? (
+                          <Input
+                            value={goal.status}
+                            onChange={(event) =>
+                              setGoals((current) =>
+                                current.map((entry) =>
+                                  entry.id === goal.id
+                                    ? { ...entry, status: event.target.value }
+                                    : entry
+                                )
+                              )
+                            }
+                          />
+                        ) : (
+                          <p className="text-sm">{goal.status || "—"}</p>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium uppercase text-muted-foreground">
+                          Focus early 2026
+                        </p>
+                        {accountType === "operator" ? (
+                          <Textarea
+                            value={goal.focus_early_2026}
+                            onChange={(event) =>
+                              setGoals((current) =>
+                                current.map((entry) =>
+                                  entry.id === goal.id
+                                    ? {
+                                        ...entry,
+                                        focus_early_2026: event.target.value,
+                                      }
+                                    : entry
+                                )
+                              )
+                            }
+                          />
+                        ) : (
+                          <p className="whitespace-pre-wrap text-sm">{goal.focus_early_2026 || "—"}</p>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium uppercase text-muted-foreground">Actions</p>
+                        {accountType === "operator" ? (
+                          <Textarea
+                            value={goal.actions}
+                            onChange={(event) =>
+                              setGoals((current) =>
+                                current.map((entry) =>
+                                  entry.id === goal.id ? { ...entry, actions: event.target.value } : entry
+                                )
+                              )
+                            }
+                          />
+                        ) : (
+                          <p className="whitespace-pre-wrap text-sm">{goal.actions || "—"}</p>
+                        )}
+                      </div>
+                      {accountType === "operator" && (
+                        <Button size="sm" onClick={() => updateGoalItem(goal)}>
+                          Save goal
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+            </div>
+          </section>
+        )}
+
+        {tab === "tracking" && (
+          <section className="space-y-6">
+            <SectionHeader
+              title="Tracking"
+              description="Airtable tracking data imported for review and updates."
+            />
+            <div className="space-y-4">
+              {tracking
+                .filter((item) => item.company)
+                .map((item) => (
+                  <Card key={item.id} className="rounded-xl">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">{item.company}</CardTitle>
+                      <CardDescription>
+                        {item.priority || "No priority"} · {item.responsible_party || "No owner"}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium uppercase text-muted-foreground">
+                            Deal stage
+                          </p>
+                          {accountType === "operator" ? (
+                            <Input
+                              value={item.deal_stage}
+                              onChange={(event) =>
+                                setTracking((current) =>
+                                  current.map((entry) =>
+                                    entry.id === item.id
+                                      ? { ...entry, deal_stage: event.target.value }
+                                      : entry
+                                  )
+                                )
+                              }
+                            />
+                          ) : (
+                            <p className="text-sm">{item.deal_stage || "—"}</p>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium uppercase text-muted-foreground">
+                            Volunteers
+                          </p>
+                          {accountType === "operator" ? (
+                            <Input
+                              value={item.volunteers_assigned_associates}
+                              onChange={(event) =>
+                                setTracking((current) =>
+                                  current.map((entry) =>
+                                    entry.id === item.id
+                                      ? {
+                                          ...entry,
+                                          volunteers_assigned_associates: event.target.value,
+                                        }
+                                      : entry
+                                  )
+                                )
+                              }
+                            />
+                          ) : (
+                            <p className="text-sm">{item.volunteers_assigned_associates || "—"}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium uppercase text-muted-foreground">
+                          Latest notes
+                        </p>
+                        <p className="whitespace-pre-wrap text-sm">{item.notes_latest_news || "—"}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium uppercase text-muted-foreground">
+                          Tasks / next steps
+                        </p>
+                        {accountType === "operator" ? (
+                          <Textarea
+                            value={item.tasks_next_steps}
+                            onChange={(event) =>
+                              setTracking((current) =>
+                                current.map((entry) =>
+                                  entry.id === item.id
+                                    ? { ...entry, tasks_next_steps: event.target.value }
+                                    : entry
+                                )
+                              )
+                            }
+                          />
+                        ) : (
+                          <p className="whitespace-pre-wrap text-sm">{item.tasks_next_steps || "—"}</p>
+                        )}
+                      </div>
+                      {accountType === "operator" && (
+                        <Button size="sm" onClick={() => updateTrackingRow(item)}>
+                          Save tracking row
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+            </div>
+          </section>
+        )}
+
         {tab === "associate-tracker" && accountType === "operator" && (
           <section className="space-y-6">
             <SectionHeader
@@ -1049,13 +1294,13 @@ export function DashboardShell({ accountType }: { accountType: AccountType }) {
         )}
 
         <Dialog open={!!activeDeal} onOpenChange={(open) => !open && setActiveDeal(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden">
             <DialogHeader>
               <DialogTitle className="text-xl">{activeDeal?.title}</DialogTitle>
               <DialogDescription className="pt-1">{activeDeal?.company}</DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-5">
+            <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
               <p className="text-sm leading-relaxed text-muted-foreground">
                 {activeDeal?.description}
               </p>

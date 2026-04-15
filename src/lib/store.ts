@@ -7,11 +7,20 @@ import {
   CommunityMember,
   DealTask,
   DealSheetFields,
+  GoalItem,
+  TrackingItem,
 } from "./types";
 
-// In-memory mock store (replace with Supabase tables in production)
+import fs from "node:fs";
 
 const users: UserProfile[] = [];
+
+const DEAL_TRACKER_PATH =
+  "/Users/tehseen/Downloads/DCP Associates Meeting - Deal Progress Tracker  - Deal Progress Tracker.csv";
+const GOALS_PATH =
+  "/Users/tehseen/Downloads/DCP Associates Meeting - Deal Progress Tracker  - DCP - Goals 2025.csv";
+const TRACKING_PATH =
+  "/Users/tehseen/Downloads/DCP Associates Meeting - Deal Progress Tracker  - To update Airtable - Tracking .csv";
 
 function emptySheetFields(): DealSheetFields {
   return {
@@ -29,199 +38,248 @@ function emptySheetFields(): DealSheetFields {
   };
 }
 
-const deals: Deal[] = [
-  {
-    id: "1",
-    title: "Series A Investment",
-    company: "TechCo Inc.",
-    description: "Series A round for an AI startup focused on healthcare.",
-    status: "in_progress",
-    created_by: "system",
-    created_by_name: "Operating Team",
-    created_at: new Date().toISOString(),
-    signed_up_associates: [],
-    updates: [
-      {
-        id: "1-1",
-        deal_id: "1",
-        author_id: "system",
-        author_name: "Operating Team",
-        stage: "Received inquiry",
-        note: "Intro email received from founder. High-level fit looks promising.",
-        created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 6).toISOString(),
+function parseCsvRows(raw: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const char = raw[i];
+    const next = raw[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(cell.trim());
+      if (row.some((value) => value.length > 0)) {
+        rows.push(row);
+      }
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell.trim());
+    if (row.some((value) => value.length > 0)) {
+      rows.push(row);
+    }
+  }
+
+  return rows;
+}
+
+function readCsv(path: string): string[][] {
+  if (!fs.existsSync(path)) return [];
+  return parseCsvRows(fs.readFileSync(path, "utf8"));
+}
+
+function splitNames(value: string): string[] {
+  return value
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => entry.replace(/^and\s+/i, ""))
+    .filter((entry) => entry && entry !== "?" && !entry.toLowerCase().includes("maybe"));
+}
+
+function statusFromStage(stage: string): Deal["status"] {
+  const normalized = stage.toLowerCase();
+  if (normalized.includes("closed") || normalized.includes("passing") || normalized.includes("pass")) {
+    return "closed";
+  }
+  if (
+    normalized.includes("active") ||
+    normalized.includes("screen") ||
+    normalized.includes("tracking") ||
+    normalized.includes("closing") ||
+    normalized.includes("dd")
+  ) {
+    return "in_progress";
+  }
+  return "open";
+}
+
+function createSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+type ImportedData = {
+  deals: Deal[];
+  goals: GoalItem[];
+  tracking: TrackingItem[];
+  associates: CommunityMember[];
+};
+
+function importCsvData(): ImportedData {
+  const dealRows = readCsv(DEAL_TRACKER_PATH);
+  const goalsRows = readCsv(GOALS_PATH);
+  const trackingRows = readCsv(TRACKING_PATH);
+
+  const associateNames = new Set<string>();
+  const deals: Deal[] = [];
+
+  for (let i = 1; i < dealRows.length; i += 1) {
+    const row = dealRows[i];
+    const company = row[0] || "";
+    if (!company) continue;
+
+    const volunteers = row[11] || "";
+    const ddTeam = row[12] || "";
+    const dealStage = row[2] || "";
+    const latestUpdates = row[8] || "";
+    const nextSteps = row[10] || "";
+
+    const combinedNames = [...splitNames(volunteers), ...splitNames(ddTeam)];
+    for (const name of combinedNames) {
+      associateNames.add(name);
+    }
+
+    const updateNote = latestUpdates.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
+    const nextStepLines = nextSteps
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const tasks: DealTask[] = nextStepLines.map((line, index) => ({
+      id: `import-task-${i}-${index + 1}`,
+      title: line.slice(0, 120),
+      details: line,
+      status: "todo",
+      due_date: "",
+      created_by: "system",
+      created_by_name: "Operating Team",
+      assigned_associate_ids: [],
+    }));
+
+    deals.push({
+      id: String(i),
+      title: company,
+      company,
+      description:
+        row[6] || row[9] || row[8] || "Imported from Deal Progress Tracker.",
+      status: statusFromStage(dealStage),
+      created_by: "system",
+      created_by_name: "Operating Team",
+      created_at: new Date().toISOString(),
+      signed_up_associates: [],
+      updates: updateNote
+        ? [
+            {
+              id: `import-update-${i}`,
+              deal_id: String(i),
+              author_id: "system",
+              author_name: "Operating Team",
+              stage: dealStage || "Update",
+              note: updateNote,
+              created_at: new Date().toISOString(),
+            },
+          ]
+        : [],
+      tasks,
+      sheet: {
+        column_1: row[1] || "",
+        deal_stage: dealStage,
+        column_14: row[3] || "",
+        deal_lead: row[4] || "",
+        investors: row[5] || "",
+        terms: row[6] || "",
+        timeline: row[7] || "",
+        latest_updates: latestUpdates,
+        associates_update: row[9] || "",
+        next_steps: nextSteps,
+        volunteers,
       },
-      {
-        id: "1-2",
-        deal_id: "1",
-        author_id: "system",
-        author_name: "Aiden Suganuma",
-        stage: "Screening call",
-        note: "Completed first screening call and captured key GTM risks to validate.",
-        created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString(),
-      },
-      {
-        id: "1-3",
-        deal_id: "1",
-        author_id: "system",
-        author_name: "Alex Boniske",
-        stage: "DD in progress",
-        note: "Drafted one-pager and started diligence doc on customer retention assumptions.",
-        created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-      },
-    ],
-    tasks: [
-      {
-        id: "1-task-1",
-        title: "Request latest investor update",
-        details: "Reach out and ask them to send the latest investor update details.",
-        status: "todo",
-        due_date: "",
-        created_by: "system",
-        created_by_name: "Operating Team",
-        assigned_associate_ids: [],
-      },
-    ],
-    sheet: {
-      ...emptySheetFields(),
-      deal_stage: "Investment Opportunity",
-      latest_updates: "DL: Reach out - have them send the latest investor update (in details).",
-      next_steps: "DL: Follow up on investor update details and timeline.",
-    },
-  },
-  {
-    id: "2",
-    title: "Seed Round Due Diligence",
-    company: "GreenEnergy Corp",
-    description: "Seed round for a clean energy company.",
-    status: "open",
-    created_by: "system",
-    created_by_name: "Operating Team",
-    created_at: new Date().toISOString(),
-    signed_up_associates: [],
-    updates: [],
-    tasks: [],
-    sheet: {
-      ...emptySheetFields(),
-      deal_stage: "6. Tracking - In 2 weeks",
-      column_14: "Investment Opportunity",
-      latest_updates:
-        "1/20: Clarify board representation and expanded SAFE pro-rata expectations.",
-      next_steps:
-        "DN: Send email to June. DL: Ask rationale for round expansion. DL: Ask Matt Dixon on pro-rata.",
-    },
-  },
-  {
-    id: "3",
-    title: "Growth Equity Review",
-    company: "FinServ Solutions",
-    description: "Growth equity opportunity in fintech space.",
-    status: "in_progress",
-    created_by: "system",
-    created_by_name: "Operating Team",
-    created_at: new Date().toISOString(),
-    signed_up_associates: [],
-    updates: [],
-    tasks: [],
-    sheet: {
-      ...emptySheetFields(),
-      deal_stage: "6. Tracking - In 2 weeks",
-      column_14: "Investment Opportunity",
-      latest_updates:
-        "Need updated 2025 financials and follow-up clarification from Justin.",
-      next_steps:
-        "DN: finalize investor email and follow up on clarifications.",
-    },
-  },
-  {
-    id: "4",
-    title: "Bridge Round Closing",
-    company: "Zoo.dev",
-    description: "Bridge round prior to Series A.",
-    status: "in_progress",
-    created_by: "system",
-    created_by_name: "Operating Team",
-    created_at: new Date().toISOString(),
-    signed_up_associates: [],
-    updates: [],
-    tasks: [
-      {
-        id: "4-task-1",
-        title: "Send wire reminders",
-        details: "Send reminder to pending investors before wire deadline.",
-        status: "in_progress",
-        due_date: "",
-        created_by: "system",
-        created_by_name: "Operating Team",
-        assigned_associate_ids: [],
-      },
-    ],
-    sheet: {
-      ...emptySheetFields(),
-      column_1: "New Company",
-      deal_stage: "2. Closing",
-      column_14: "Investment Opportunity",
-      deal_lead: "?",
-      terms: "Bridge round prior to Series A, valuation $175M",
-      timeline: "March",
-      latest_updates: "Missing some wires; continue follow-ups through closing window.",
-      next_steps:
-        "Wire tomorrow/Wednesday. After wire, thank David Price for intro.",
-      volunteers: "Karan, Chris, A'nna, Lauren L., Utkarsh",
-    },
-  },
-  {
-    id: "5",
-    title: "Secondary Option Review",
-    company: "Fluidstack",
-    description: "SAFE / Secondary option closing process.",
-    status: "in_progress",
-    created_by: "system",
-    created_by_name: "Operating Team",
-    created_at: new Date().toISOString(),
-    signed_up_associates: [],
-    updates: [],
-    tasks: [],
-    sheet: {
-      ...emptySheetFields(),
-      column_1: "Portfolio Company",
-      deal_stage: "2. Closing",
-      column_14: "Secondary Option",
-      deal_lead: "DN/DL",
-      terms: "SAFE/Secondary option",
-      timeline: "Wire by 31st",
-      latest_updates: "Confirm KYC completion and finalize wire instructions.",
-      next_steps: "DL: Confirm wire instructions and wire today.",
-      volunteers: "Evelyn, Matt, Tehseen, Chris",
-    },
-  },
-];
+    });
+  }
+
+  const associates: CommunityMember[] = [...associateNames].map((fullName) => {
+    const slug = createSlug(fullName || "associate");
+    return {
+      id: `associate-${slug}`,
+      full_name: fullName,
+      email: `${slug}@dcp.local`,
+      phone: "",
+      role: "associate",
+    };
+  });
+
+  const associateByName = new Map<string, string>();
+  for (const associate of associates) {
+    associateByName.set(associate.full_name.toLowerCase(), associate.id);
+  }
+
+  for (const deal of deals) {
+    const names = [
+      ...splitNames(deal.sheet.volunteers),
+      ...splitNames((deal as Deal).sheet.associates_update),
+    ];
+    const ids = names
+      .map((name) => associateByName.get(name.toLowerCase()))
+      .filter((id): id is string => Boolean(id));
+    deal.signed_up_associates = [...new Set(ids)];
+  }
+
+  const goals: GoalItem[] = goalsRows.slice(1).map((row, index) => ({
+    id: `goal-${index + 1}`,
+    annual_goal: row[0] || "",
+    status: row[1] || "",
+    focus_early_2026: row[2] || "",
+    actions: row[3] || "",
+  }));
+
+  const tracking: TrackingItem[] = trackingRows.slice(1).map((row, index) => ({
+    id: `tracking-${index + 1}`,
+    company: row[0] || "",
+    column_1: row[1] || "",
+    deal_stage: row[2] || "",
+    priority: row[3] || "",
+    responsible_party: row[4] || "",
+    dcp_pitch: row[5] || "",
+    investors: row[6] || "",
+    terms: row[7] || "",
+    timeline: row[8] || "",
+    notes_latest_news: row[9] || "",
+    tasks_next_steps: row[10] || "",
+    volunteers_assigned_associates: row[11] || "",
+    dd_team: row[12] || "",
+    column_3: row[13] || "",
+  }));
+
+  return { deals, goals, tracking, associates };
+}
+
+const imported = importCsvData();
+const deals: Deal[] = imported.deals;
+const goals: GoalItem[] = imported.goals;
+const trackingItems: TrackingItem[] = imported.tracking;
 
 const sourcedCompanies: SourcedCompany[] = [];
 
 const associateStats: Record<string, AssociateStats> = {};
-const communitySeed: CommunityMember[] = [
-  {
-    id: "community-1",
-    full_name: "Aiden Suganuma",
-    email: "aiden.suganuma@duke.edu",
-    phone: "5716452655",
-    role: "associate",
-  },
-  {
-    id: "community-2",
-    full_name: "Alex Boniske",
-    email: "alex.boniske@duke.edu",
-    phone: "8287673137",
-    role: "associate",
-  },
-  {
-    id: "community-3",
-    full_name: "Alex Chindris",
-    email: "alex.chindris@duke.edu",
-    phone: "9048644252",
-    role: "alumni",
-  },
-];
+const communitySeed: CommunityMember[] = imported.associates;
 
 function getDefaultStats(): AssociateStats {
   return {
@@ -425,6 +483,38 @@ export function getAssociateStats(userId: string): AssociateStats {
 
 export function getAssociateDeals(userId: string): Deal[] {
   return deals.filter((d) => d.signed_up_associates.includes(userId));
+}
+
+export function getGoals(): GoalItem[] {
+  return goals;
+}
+
+export function updateGoal(
+  goalId: string,
+  updates: Pick<GoalItem, "status" | "focus_early_2026" | "actions">
+): GoalItem | undefined {
+  const goal = goals.find((entry) => entry.id === goalId);
+  if (!goal) return undefined;
+  goal.status = updates.status;
+  goal.focus_early_2026 = updates.focus_early_2026;
+  goal.actions = updates.actions;
+  return goal;
+}
+
+export function getTrackingItems(): TrackingItem[] {
+  return trackingItems;
+}
+
+export function updateTrackingItem(
+  trackingId: string,
+  updates: Pick<TrackingItem, "deal_stage" | "tasks_next_steps" | "volunteers_assigned_associates">
+): TrackingItem | undefined {
+  const row = trackingItems.find((entry) => entry.id === trackingId);
+  if (!row) return undefined;
+  row.deal_stage = updates.deal_stage;
+  row.tasks_next_steps = updates.tasks_next_steps;
+  row.volunteers_assigned_associates = updates.volunteers_assigned_associates;
+  return row;
 }
 
 export function getCommunityMembers(): CommunityMember[] {

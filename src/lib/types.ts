@@ -99,3 +99,29 @@ export interface CommunityMember {
   phone: string;
   role: "associate" | "operator" | "alumni" | "operating_team";
 }
+
+export interface GoalItem {
+  id: string;
+  annual_goal: string;
+  status: string;
+  focus_early_2026: string;
+  actions: string;
+}
+
+export interface TrackingItem {
+  id: string;
+  company: string;
+  column_1: string;
+  deal_stage: string;
+  priority: string;
+  responsible_party: string;
+  dcp_pitch: string;
+  investors: string;
+  terms: string;
+  timeline: string;
+  notes_latest_news: string;
+  tasks_next_steps: string;
+  volunteers_assigned_associates: string;
+  dd_team: string;
+  column_3: string;
+}
